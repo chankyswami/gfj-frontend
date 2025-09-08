@@ -48,7 +48,11 @@ pipeline {
                         sh '''
                             set -x
                             echo "🌐 Installing npm dependencies"
-                            npm ci
+                            if [ -f package-lock.json ]; then
+                                npm ci
+                            else
+                                npm install
+                            fi
 
                             echo "🌐 Building production bundle"
                             npm run build
@@ -67,7 +71,8 @@ pipeline {
                                 set -x
                                 buildah login -u "${DOCKER_USERNAME}" -p "${DOCKER_PASSWORD}" docker.io
 
-                                # Build image using Dockerfile in gfj-frontend. Dockerfile should COPY the build output (e.g. build/ or dist/) into nginx/static image.
+                                # Build image using Dockerfile in gfj-frontend
+                                # Dockerfile should COPY the React build/ folder into nginx image
                                 buildah bud -t ${IMAGE_NAME} -f gfj-frontend/Dockerfile gfj-frontend
 
                                 buildah push ${IMAGE_NAME}
@@ -89,7 +94,7 @@ pipeline {
                                 git clone -b main ${DEPLOYMENT_REPO_AUTH} k8s-manifests
                                 cd k8s-manifests
 
-                                # Replace image placeholders in deployment.yaml (update to your manifest path if different)
+                                # Replace image placeholders in deployment.yaml
                                 if grep -q "image: " deployment.yaml; then
                                   sed -i 's|image: .*|image: '"${IMAGE_NAME}"'|' deployment.yaml
                                 else
