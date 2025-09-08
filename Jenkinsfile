@@ -9,6 +9,8 @@ pipeline {
     environment {
         GIT_CREDENTIALS_ID = 'jenkins-token-github'
         DOCKER_CREDS_ID    = 'dockerhub-username-password'
+        SONAR_URL          = 'http://sonarqube.devops-tools.svc.cluster.local:9000'
+        SONAR_TOKEN        = credentials('sonar-token')
     }
 
     stages {
@@ -24,13 +26,13 @@ pipeline {
             steps {
                 container('jnlp') {
                     script {
-                        def repoUrl      = scm.getUserRemoteConfigs()[0].getUrl()
-                        def repoName     = repoUrl.tokenize('/').last().replace('.git','').toLowerCase()
+                        def repoUrl       = scm.getUserRemoteConfigs()[0].getUrl()
+                        def repoName      = repoUrl.tokenize('/').last().replace('.git','').toLowerCase()
                         def deploymentRepo = repoUrl.replace('.git','') + "-deployment.git"
-                        def commitSha    = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                        def commitSha     = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
 
-                        env.REPO_NAME      = repoName
-                        env.IMAGE_NAME     = "docker.io/chankyswami/${repoName}:${commitSha}"
+                        env.REPO_NAME       = repoName
+                        env.IMAGE_NAME      = "docker.io/chankyswami/${repoName}:${commitSha}"
                         env.DEPLOYMENT_REPO = deploymentRepo
 
                         echo "📦 Repository Name: ${repoName}"
@@ -48,11 +50,45 @@ pipeline {
                         sh '''
                             set -eux
                             echo "🌐 Installing npm dependencies"
-                            npm install   # ✅ identical to EC2 pipeline
+                            npm install   # same as EC2 pipeline
 
                             echo "⚒️ Building production bundle"
                             npm run build
                         '''
+                    }
+                }
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                container('jnlp') {
+                    dir('gfj-ui') {
+                        withSonarQubeEnv('sonar') {
+                            sh '''
+                                set -eux
+                                echo "🔍 Running SonarQube analysis for frontend"
+
+                                npx sonar-scanner \
+                                  -Dsonar.projectKey=${REPO_NAME} \
+                                  -Dsonar.sources=src \
+                                  -Dsonar.host.url=${SONAR_URL} \
+                                  -Dsonar.login=${SONAR_TOKEN} \
+                                  -Dsonar.exclusions=**/node_modules/**,**/dist/**
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Quality Gate') {
+            steps {
+                container('jnlp') {
+                    script {
+                        timeout(time: 5, unit: 'MINUTES') {
+                            waitForQualityGate abortPipeline: true
+                        }
                     }
                 }
             }
@@ -115,7 +151,7 @@ pipeline {
             echo "❌ Pipeline failed"
         }
         success {
-            echo "✅ Frontend image built and deployment repo updated"
+            echo "✅ Frontend image built, scanned with SonarQube, and deployment repo updated"
         }
     }
 }
