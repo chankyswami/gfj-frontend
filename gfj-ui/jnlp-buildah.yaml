@@ -1,0 +1,45 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: jnlp with buildah
+  namespace: devops-tools
+spec:
+  containers:
+  - name: jnlp
+    # image: chankyswami/jnlp-docker-mvn-trivy
+    image: chankyswami/jnlp-java21-node20-mvn-trivy-new
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "200m"
+      limits:
+        memory: "2Gi"
+        cpu: "1"
+    workingDir: /home/jenkins/agent
+    args:
+    - "$(JENKINS_SECRET)"
+    - "$(JENKINS_NAME)"
+    tty: false
+    
+  - name: buildah
+    image: quay.io/buildah/stable:v1.23.1
+    command:
+    - cat
+    tty: true
+    securityContext:
+      privileged: true
+    volumeMounts:
+      - name: varlibcontainers
+        mountPath: /var/lib/containers
+      - name: docker-secret
+        mountPath: /home/build/.docker  # Mount docker credentials to the correct path
+      # - name: workspace-volume
+      #   mountPath: /home/jenkins/agent/workspace
+  volumes:
+    - name: varlibcontainers
+      emptyDir: {}  # FIX: Use emptyDir instead of a secret
+    - name: docker-secret
+      secret:
+        secretName: docker-credentials
+
+  restartPolicy: Never
