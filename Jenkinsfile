@@ -1,158 +1,121 @@
 pipeline {
     agent {
-        docker {
-            image 'maven-terraform-node-agent:latest'
-            args '-v /var/run/docker.sock:/var/run/docker.sock'
+        kubernetes {
+            label 'jnlp-buildah'
+            yamlFile 'gfj-be/jnlp-buildah.yaml'
         }
     }
 
     environment {
-        EC2_INSTANCE_IP     = '13.203.132.105'
-        EC2_INSTANCE_USER   = 'ec2-user'
-        DEPLOY_PATH         = '/home/ec2-user'
-        AWS_REGION          = 'ap-south-1'
-        TF_PLAN_FILE        = 'tfplan'
-        SERVICE_NAME        = 'gfj-app.service'
-        START_SCRIPT        = '/home/ec2-user/start.gfj.sh'
-    }
-
-    parameters {
-        booleanParam(name: 'APPLY_TF', defaultValue: false, description: 'Apply Terraform changes?')
-        booleanParam(name: 'DESTROY_TF', defaultValue: false, description: 'Destroy infrastructure instead of running pipeline?')
-        booleanParam(name: 'BUILD_BACKEND', defaultValue: true, description: 'Build & Deploy backend service?')
-        booleanParam(name: 'BUILD_FRONTEND', defaultValue: true, description: 'Build & Deploy frontend service?')
+        GIT_CREDENTIALS_ID = 'jenkins-token-github'
+        DOCKER_CREDS_ID = 'dockerhub-username-password'
     }
 
     stages {
-        stage('Terraform Destroy') {
-            when { expression { return params.DESTROY_TF == true } }
+        stage('Checkout') {
             steps {
-                echo "💣 Destroying infrastructure..."
-                withAWS(credentials: 'GEMS-AWS', region: "${env.AWS_REGION}") {
-                    dir('terraform-gem/environments/dev') {
-                        sh '''
-                            terraform init -input=false
-                            terraform destroy -auto-approve
-                        '''
-                    }
+                container('jnlp') {
+                    checkout scm
                 }
             }
         }
 
-        stage('Terraform Init & Plan') {
-            when { expression { return params.DESTROY_TF == false } }
+        stage('Get Repo Name') {
             steps {
-                echo "🌍 Initializing and planning Terraform..."
-                withAWS(credentials: 'GEMS-AWS', region: "${env.AWS_REGION}") {
-                    dir('terraform-gem/environments/dev') {
-                        sh '''
-                            terraform init -input=false
-                            terraform plan -out=${TF_PLAN_FILE}
-                        '''
-                    }
-                }
-            }
-        }
-
-        stage('Terraform Apply') {
-            when { expression { return params.APPLY_TF == true && params.DESTROY_TF == false } }
-            steps {
-                echo "🚀 Applying Terraform changes..."
-                withAWS(credentials: 'GEMS-AWS', region: "${env.AWS_REGION}") {
-                    dir('terraform-gem/environments/dev') {
-                        sh '''
-                            terraform apply -auto-approve ${TF_PLAN_FILE}
-                        '''
-                    }
-                }
-            }
-        }
-
-        stage('Build Backend') {
-            when { expression { return params.DESTROY_TF == false && params.BUILD_BACKEND == true } }
-            steps {
-                dir('gfj-be') {
-                    sh 'echo "🔧 Checking Maven version..."'
-                    sh 'mvn -v'
-
-                    sh 'echo "🛠️ Building the Spring Boot project..."'
-                    sh 'mvn clean package -DskipTests=true || exit 1'
-
-                    sh 'echo "📦 Listing JARs in target directory..."'
-                    sh 'ls -lh target/*.jar || echo "❌ No JAR found!"'
-
+                container('jnlp') {
                     script {
-                        def jarFile = sh(script: "ls target/*.jar | grep SNAPSHOT | head -n 1", returnStdout: true).trim()
-                        env.JAR_NAME = jarFile.tokenize('/').last()
-                        echo "📌 Detected JAR: ${env.JAR_NAME}"
+                        def repoUrl = scm.getUserRemoteConfigs()[0].getUrl()
+                        def repoName = repoUrl.tokenize('/').last().replace('.git','').toLowerCase()
+                        def deploymentRepo = repoUrl.replace('.git','') + "-deployment.git"
+                        def commitSha = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+
+                        env.REPO_NAME = repoName
+                        env.IMAGE_NAME = "docker.io/chankyswami/${repoName}:${commitSha}"
+                        env.DEPLOYMENT_REPO = deploymentRepo
+
+                        echo "Repository Name: ${repoName}"
+                        echo "Docker Image Name: ${env.IMAGE_NAME}"
+                        echo "Deployment Repository: ${env.DEPLOYMENT_REPO}"
                     }
                 }
             }
         }
 
-        stage('Build Frontend') {
-            when { expression { return params.DESTROY_TF == false && params.BUILD_FRONTEND == true } }
+        stage('Build Frontend (npm)') {
             steps {
-                dir('gfj-ui') {
-                    sh '''
-                        echo "🌐 Building React frontend..."
-                        npm install
-                        npm run build
-                    '''
+                container('jnlp') {
+                    dir('gfj-frontend') {
+                        sh '''
+                            set -x
+                            echo "🌐 Installing npm dependencies"
+                            npm ci
+
+                            echo "🌐 Building production bundle"
+                            npm run build
+                        '''
+                    }
                 }
             }
         }
 
-        stage('Deploy Backend') {
-            when { expression { return params.DESTROY_TF == false && params.BUILD_BACKEND == true } }
+        stage('Build & Push Image with Buildah') {
             steps {
-                echo "🚚 Deploying Spring Boot backend..."
-                sshagent(credentials: ['ec2-creds']) {
-                    sh """
-                        scp -o StrictHostKeyChecking=no gfj-be/target/${JAR_NAME} ${EC2_INSTANCE_USER}@${EC2_INSTANCE_IP}:${DEPLOY_PATH}/
+                container('buildah') {
+                    withCredentials([usernamePassword(credentialsId: "${DOCKER_CREDS_ID}", usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
+                        script {
+                            sh '''
+                                set -x
+                                buildah login -u "${DOCKER_USERNAME}" -p "${DOCKER_PASSWORD}" docker.io
 
-                        ssh -o StrictHostKeyChecking=no ${EC2_INSTANCE_USER}@${EC2_INSTANCE_IP} '
-                            sed -i "s|java -jar .*\\.jar|java -jar ${DEPLOY_PATH}/${JAR_NAME}|g" ${START_SCRIPT}
-                            echo "✅ Updated start.gfj.sh:"
-                            grep "java -jar" ${START_SCRIPT}
+                                # Build image using Dockerfile in gfj-frontend. Dockerfile should COPY the build output (e.g. build/ or dist/) into nginx/static image.
+                                buildah bud -t ${IMAGE_NAME} -f gfj-frontend/Dockerfile gfj-frontend
 
-                            chmod +x ${START_SCRIPT} &&
-                            sudo systemctl daemon-reload &&
-                            sudo systemctl enable ${SERVICE_NAME} &&
-                            sudo systemctl restart ${SERVICE_NAME} &&
-                            sudo systemctl status ${SERVICE_NAME} --no-pager -l
-                        '
-                    """
+                                buildah push ${IMAGE_NAME}
+                            '''
+                        }
+                    }
                 }
             }
         }
 
-        stage('Deploy Frontend') {
-            when { expression { return params.DESTROY_TF == false && params.BUILD_FRONTEND == true } }
+        stage('Update K8s Manifests & Push to chanky Branch') {
             steps {
-                echo "🚚 Deploying React frontend..."
-                sshagent(credentials: ['ec2-creds']) {
-                    sh """
-                        # Copy build artifacts directly into a temporary folder
-                        ssh -o StrictHostKeyChecking=no ${EC2_INSTANCE_USER}@${EC2_INSTANCE_IP} 'rm -rf ${DEPLOY_PATH}/frontend_build && mkdir -p ${DEPLOY_PATH}/frontend_build'
+                container('jnlp') {
+                    withCredentials([string(credentialsId: "${GIT_CREDENTIALS_ID}", variable: 'GIT_TOKEN')]) {
+                        script {
+                            sh '''
+                                set -x
+                                DEPLOYMENT_REPO_AUTH=$(echo ${DEPLOYMENT_REPO} | sed "s|https://|https://${GIT_TOKEN}@|")
+                                git clone -b main ${DEPLOYMENT_REPO_AUTH} k8s-manifests
+                                cd k8s-manifests
 
-                        scp -o StrictHostKeyChecking=no -r gfj-ui/dist/* ${EC2_INSTANCE_USER}@${EC2_INSTANCE_IP}:${DEPLOY_PATH}/frontend_build/
+                                # Replace image placeholders in deployment.yaml (update to your manifest path if different)
+                                if grep -q "image: " deployment.yaml; then
+                                  sed -i 's|image: .*|image: '"${IMAGE_NAME}"'|' deployment.yaml
+                                else
+                                  echo "No image: line found in deployment.yaml — ensure correct manifest path"
+                                fi
 
-                        # Replace nginx html content with frontend build
-                        ssh -o StrictHostKeyChecking=no ${EC2_INSTANCE_USER}@${EC2_INSTANCE_IP} '
-                            sudo rm -rf /usr/share/nginx/html/*
-                            sudo cp -r ${DEPLOY_PATH}/frontend_build/* /usr/share/nginx/html/
-                            sudo systemctl restart nginx
-                            echo "✅ Frontend deployed to /usr/share/nginx/html"
-                        '
-                    """
+                                git config --global user.email "c.innovator@gmail.com"
+                                git config --global user.name "chankyswami"
+
+                                git add .
+                                git commit -m "chore: update frontend image to ${IMAGE_NAME}" || echo "No changes to commit"
+                                git push origin main || echo "Push failed"
+                            '''
+                        }
+                    }
                 }
             }
         }
     }
 
     post {
-        success { echo '✅ Job finished successfully!' }
-        failure { echo '❌ Job failed. Check the logs for more details.' }
+        failure {
+            echo "❌ Pipeline failed"
+        }
+        success {
+            echo "✅ Frontend image built and deployment repo updated"
+        }
     }
 }

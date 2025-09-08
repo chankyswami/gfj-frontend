@@ -1,0 +1,17 @@
+# Use official Nginx image as parent (with full registry path)
+FROM docker.io/library/nginx:alpine
+
+# Set the working directory in the container
+WORKDIR /usr/share/nginx/html
+
+# Remove default nginx static files
+RUN rm -rf ./*
+
+# Copy frontend build artifacts from Jenkins workspace into container
+COPY dist/ ./
+
+# Expose port 80
+EXPOSE 80
+
+# Start nginx
+CMD ["nginx", "-g", "daemon off;"]
