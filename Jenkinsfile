@@ -8,7 +8,7 @@ pipeline {
 
     environment {
         GIT_CREDENTIALS_ID = 'jenkins-token-github'
-        DOCKER_CREDS_ID = 'dockerhub-username-password'
+        DOCKER_CREDS_ID    = 'dockerhub-username-password'
     }
 
     stages {
@@ -24,18 +24,18 @@ pipeline {
             steps {
                 container('jnlp') {
                     script {
-                        def repoUrl = scm.getUserRemoteConfigs()[0].getUrl()
-                        def repoName = repoUrl.tokenize('/').last().replace('.git','').toLowerCase()
+                        def repoUrl     = scm.getUserRemoteConfigs()[0].getUrl()
+                        def repoName    = repoUrl.tokenize('/').last().replace('.git','').toLowerCase()
                         def deploymentRepo = repoUrl.replace('.git','') + "-deployment.git"
-                        def commitSha = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                        def commitSha   = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
 
-                        env.REPO_NAME = repoName
-                        env.IMAGE_NAME = "docker.io/chankyswami/${repoName}:${commitSha}"
+                        env.REPO_NAME      = repoName
+                        env.IMAGE_NAME     = "docker.io/chankyswami/${repoName}:${commitSha}"
                         env.DEPLOYMENT_REPO = deploymentRepo
 
-                        echo "Repository Name: ${repoName}"
-                        echo "Docker Image Name: ${env.IMAGE_NAME}"
-                        echo "Deployment Repository: ${env.DEPLOYMENT_REPO}"
+                        echo "📦 Repo: ${repoName}"
+                        echo "🖼️ Image: ${env.IMAGE_NAME}"
+                        echo "🌍 Deployment repo: ${env.DEPLOYMENT_REPO}"
                     }
                 }
             }
@@ -44,9 +44,9 @@ pipeline {
         stage('Build Frontend (npm)') {
             steps {
                 container('jnlp') {
-                    dir('gfj-frontend') {
+                    dir('gfj-ui') { // ✅ correct folder
                         sh '''
-                            set -x
+                            set -eux
                             echo "🌐 Installing npm dependencies"
                             if [ -f package-lock.json ]; then
                                 npm ci
@@ -54,7 +54,7 @@ pipeline {
                                 npm install
                             fi
 
-                            echo "🌐 Building production bundle"
+                            echo "⚒️ Building production bundle"
                             npm run build
                         '''
                     }
@@ -66,49 +66,47 @@ pipeline {
             steps {
                 container('buildah') {
                     withCredentials([usernamePassword(credentialsId: "${DOCKER_CREDS_ID}", usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
-                        script {
-                            sh '''
-                                set -x
-                                buildah login -u "${DOCKER_USERNAME}" -p "${DOCKER_PASSWORD}" docker.io
+                        sh '''
+                            set -eux
+                            buildah login -u "${DOCKER_USERNAME}" -p "${DOCKER_PASSWORD}" docker.io
 
-                                # Build image using Dockerfile in gfj-frontend
-                                # Dockerfile should COPY the React build/ folder into nginx image
-                                buildah bud -t ${IMAGE_NAME} -f gfj-frontend/Dockerfile gfj-frontend
+                            echo "📦 Building image..."
+                            buildah bud -t ${IMAGE_NAME} -f gfj-ui/Dockerfile gfj-ui
 
-                                buildah push ${IMAGE_NAME}
-                            '''
-                        }
+                            echo "⬆️ Pushing image..."
+                            buildah push ${IMAGE_NAME}
+                        '''
                     }
                 }
             }
         }
 
-        stage('Update K8s Manifests & Push to chanky Branch') {
+        stage('Update K8s Manifests & Push') {
             steps {
                 container('jnlp') {
                     withCredentials([string(credentialsId: "${GIT_CREDENTIALS_ID}", variable: 'GIT_TOKEN')]) {
-                        script {
-                            sh '''
-                                set -x
-                                DEPLOYMENT_REPO_AUTH=$(echo ${DEPLOYMENT_REPO} | sed "s|https://|https://${GIT_TOKEN}@|")
-                                git clone -b main ${DEPLOYMENT_REPO_AUTH} k8s-manifests
-                                cd k8s-manifests
+                        sh '''
+                            set -eux
+                            DEPLOYMENT_REPO_AUTH=$(echo ${DEPLOYMENT_REPO} | sed "s|https://|https://${GIT_TOKEN}@|")
+                            git clone -b main ${DEPLOYMENT_REPO_AUTH} k8s-manifests
+                            cd k8s-manifests
 
-                                # Replace image placeholders in deployment.yaml
-                                if grep -q "image: " deployment.yaml; then
-                                  sed -i 's|image: .*|image: '"${IMAGE_NAME}"'|' deployment.yaml
-                                else
-                                  echo "No image: line found in deployment.yaml — ensure correct manifest path"
-                                fi
+                            # Adjust if your deployment manifest path differs
+                            DEPLOY_FILE="deployment.yaml"
 
-                                git config --global user.email "c.innovator@gmail.com"
-                                git config --global user.name "chankyswami"
+                            if grep -q "image:" ${DEPLOY_FILE}; then
+                              sed -i 's|image: .*|image: '"${IMAGE_NAME}"'|' ${DEPLOY_FILE}
+                            else
+                              echo "⚠️ No image line found in ${DEPLOY_FILE}"
+                            fi
 
-                                git add .
-                                git commit -m "chore: update frontend image to ${IMAGE_NAME}" || echo "No changes to commit"
-                                git push origin main || echo "Push failed"
-                            '''
-                        }
+                            git config user.email "c.innovator@gmail.com"
+                            git config user.name "chankyswami"
+
+                            git add .
+                            git commit -m "chore: update frontend image to ${IMAGE_NAME}" || echo "ℹ️ No changes to commit"
+                            git push origin main || echo "⚠️ Push failed"
+                        '''
                     }
                 }
             }
