@@ -2,7 +2,7 @@ import axios from 'axios';
 
 // Create axios instance with default configuration
 const apiClient = axios.create({
-  baseURL: `/api`,
+  baseURL: `http://gfj-backend/api`,
   timeout: 10000, // 10 second timeout
   headers: {
     'Content-Type': 'application/json',
