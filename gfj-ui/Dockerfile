@@ -17,7 +17,7 @@
 # CMD ["nginx", "-g", "daemon off;"]
 
 # Stage 1: Build the React app
-FROM node:22-alpine AS builder
+FROM node:22-bookworm AS builder
 WORKDIR /app
 COPY package*.json ./
 RUN npm install
