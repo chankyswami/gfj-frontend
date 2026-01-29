@@ -53,7 +53,10 @@ pipeline {
                     dir('gfj-ui') {
                         sh '''
                             set -eux
+                            echo "🌐 Installing npm dependencies"
                             npm install
+
+                            echo "⚒️ Building production bundle"
                             npm run build
                         '''
                     }
@@ -65,24 +68,30 @@ pipeline {
         stage('OWASP Dependency Check') {
             steps {
                 container('jnlp') {
-                    dir('gfj-ui') {
-                        sh '''
-                            set -eux
-                            mkdir -p dependency-check-report
+                    withCredentials([
+                        string(credentialsId: 'nvd-api-key', variable: 'NVD_API_KEY')
+                    ]) {
+                        dir('gfj-ui') {
+                            sh '''
+                                set -eux
+                                mkdir -p dependency-check-report
 
-                            dependency-check.sh \
-                              --scan . \
-                              --format "ALL" \
-                              --out dependency-check-report \
-                              --disableAssembly \
-                              --failOnCVSS 7
-                        '''
+                                dependency-check.sh \
+                                  --scan . \
+                                  --format ALL \
+                                  --out dependency-check-report \
+                                  --disableAssembly \
+                                  --failOnCVSS 7 \
+                                  --nvdApiKey ${NVD_API_KEY}
+                            '''
+                        }
                     }
                 }
             }
             post {
                 always {
                     dependencyCheckPublisher pattern: '**/dependency-check-report/dependency-check-report.xml'
+                    archiveArtifacts artifacts: '**/dependency-check-report/*.html', fingerprint: true
                 }
             }
         }
@@ -95,6 +104,8 @@ pipeline {
                         withSonarQubeEnv('sonar') {
                             sh '''
                                 set -eux
+                                echo "🔍 Running SonarQube analysis"
+
                                 npx sonar-scanner \
                                   -Dsonar.projectKey=${REPO_NAME} \
                                   -Dsonar.sources=src \
@@ -125,6 +136,7 @@ pipeline {
                 container('buildah') {
                     sh '''
                         set -eux
+                        echo "📦 Building container image..."
                         buildah bud -t ${IMAGE_NAME} -f gfj-ui/Dockerfile gfj-ui
                     '''
                 }
@@ -137,11 +149,15 @@ pipeline {
                 container('buildah') {
                     sh '''
                         set -eux
+                        echo "🔎 Running Trivy image scan..."
+
                         trivy image \
                           --severity HIGH,CRITICAL \
                           --exit-code 1 \
                           --no-progress \
                           ${IMAGE_NAME}
+
+                        echo "✅ Trivy scan passed"
                     '''
                 }
             }
@@ -160,7 +176,10 @@ pipeline {
                     ]) {
                         sh '''
                             set -eux
+                            echo "🔑 Logging in to Docker Hub..."
                             buildah login -u "${DOCKER_USERNAME}" -p "${DOCKER_PASSWORD}" docker.io
+
+                            echo "📤 Pushing image..."
                             buildah push ${IMAGE_NAME}
                         '''
                     }
@@ -179,16 +198,18 @@ pipeline {
                             set -eux
                             DEPLOYMENT_REPO_AUTH=$(echo ${DEPLOYMENT_REPO} | sed "s|https://|https://${GIT_TOKEN}@|")
 
+                            echo "📥 Cloning deployment repo..."
                             git clone -b main ${DEPLOYMENT_REPO_AUTH} k8s-manifests
                             cd k8s-manifests
 
+                            echo "📝 Updating image reference..."
                             sed -i 's|image: .*|image: '"${IMAGE_NAME}"'|' deployment.yaml
 
                             git config user.email "c.innovator@gmail.com"
                             git config user.name  "chankyswami"
 
                             git add .
-                            git commit -m "chore: update frontend image to ${IMAGE_NAME}" || echo "No changes"
+                            git commit -m "chore: update frontend image to ${IMAGE_NAME}" || echo "ℹ️ No changes"
                             git push origin main
                         '''
                     }
