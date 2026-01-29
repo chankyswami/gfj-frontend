@@ -14,6 +14,8 @@ pipeline {
     }
 
     stages {
+
+        /* ===================== CHECKOUT ===================== */
         stage('Checkout') {
             steps {
                 container('jnlp') {
@@ -22,27 +24,29 @@ pipeline {
             }
         }
 
+        /* ===================== METADATA ===================== */
         stage('Get Repo Name') {
             steps {
                 container('jnlp') {
                     script {
-                        def repoUrl       = scm.getUserRemoteConfigs()[0].getUrl()
-                        def repoName      = repoUrl.tokenize('/').last().replace('.git','').toLowerCase()
+                        def repoUrl        = scm.getUserRemoteConfigs()[0].getUrl()
+                        def repoName       = repoUrl.tokenize('/').last().replace('.git','').toLowerCase()
                         def deploymentRepo = repoUrl.replace('.git','') + "-deployment.git"
-                        def commitSha     = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                        def commitSha      = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
 
                         env.REPO_NAME       = repoName
                         env.IMAGE_NAME      = "docker.io/chankyswami/${repoName}:${commitSha}"
                         env.DEPLOYMENT_REPO = deploymentRepo
 
-                        echo "📦 Repository Name: ${repoName}"
-                        echo "🐳 Docker Image Name: ${env.IMAGE_NAME}"
-                        echo "📂 Deployment Repository: ${env.DEPLOYMENT_REPO}"
+                        echo "📦 Repo Name        : ${repoName}"
+                        echo "🐳 Image Name       : ${env.IMAGE_NAME}"
+                        echo "📂 Deployment Repo  : ${env.DEPLOYMENT_REPO}"
                     }
                 }
             }
         }
 
+        /* ===================== BUILD FRONTEND ===================== */
         stage('Build Frontend (npm)') {
             steps {
                 container('jnlp') {
@@ -50,7 +54,7 @@ pipeline {
                         sh '''
                             set -eux
                             echo "🌐 Installing npm dependencies"
-                            npm install   # same as EC2 pipeline
+                            npm install
 
                             echo "⚒️ Building production bundle"
                             npm run build
@@ -60,6 +64,28 @@ pipeline {
             }
         }
 
+        /* ===================== OWASP DEPENDENCY CHECK ===================== */
+        stage('OWASP Dependency Check') {
+            steps {
+                container('jnlp') {
+                    dir('gfj-ui') {
+                        dependencyCheck additionalArguments: '''
+                            --scan .
+                            --format HTML
+                            --disableAssembly
+                        ''',
+                        odcInstallation: 'OWASP-Dependency-Check'
+                    }
+                }
+            }
+            post {
+                always {
+                    dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+                }
+            }
+        }
+
+        /* ===================== SONARQUBE ===================== */
         stage('SonarQube Analysis') {
             steps {
                 container('jnlp') {
@@ -67,7 +93,7 @@ pipeline {
                         withSonarQubeEnv('sonar') {
                             sh '''
                                 set -eux
-                                echo "🔍 Running SonarQube analysis for frontend"
+                                echo "🔍 Running SonarQube analysis"
 
                                 npx sonar-scanner \
                                   -Dsonar.projectKey=${REPO_NAME} \
@@ -82,6 +108,7 @@ pipeline {
             }
         }
 
+        /* ===================== QUALITY GATE ===================== */
         stage('Quality Gate') {
             steps {
                 container('jnlp') {
@@ -94,19 +121,56 @@ pipeline {
             }
         }
 
-        stage('Build & Push Image with Buildah') {
+        /* ===================== BUILD IMAGE ===================== */
+        stage('Build Image with Buildah') {
             steps {
                 container('buildah') {
-                    withCredentials([usernamePassword(credentialsId: "${DOCKER_CREDS_ID}", usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
+                    sh '''
+                        set -eux
+                        echo "📦 Building container image..."
+                        buildah bud -t ${IMAGE_NAME} -f gfj-ui/Dockerfile gfj-ui
+                    '''
+                }
+            }
+        }
+
+        /* ===================== TRIVY IMAGE SCAN ===================== */
+        stage('Trivy Image Scan') {
+            steps {
+                container('buildah') {
+                    sh '''
+                        set -eux
+                        echo "🔎 Running Trivy image scan..."
+
+                        trivy image \
+                          --severity HIGH,CRITICAL \
+                          --exit-code 1 \
+                          --no-progress \
+                          ${IMAGE_NAME}
+
+                        echo "✅ Trivy scan passed"
+                    '''
+                }
+            }
+        }
+
+        /* ===================== PUSH IMAGE ===================== */
+        stage('Push Image to Docker Hub') {
+            steps {
+                container('buildah') {
+                    withCredentials([
+                        usernamePassword(
+                            credentialsId: "${DOCKER_CREDS_ID}",
+                            usernameVariable: 'DOCKER_USERNAME',
+                            passwordVariable: 'DOCKER_PASSWORD'
+                        )
+                    ]) {
                         sh '''
                             set -eux
                             echo "🔑 Logging in to Docker Hub..."
                             buildah login -u "${DOCKER_USERNAME}" -p "${DOCKER_PASSWORD}" docker.io
 
-                            echo "📦 Building image with Buildah..."
-                            buildah bud -t ${IMAGE_NAME} -f gfj-ui/Dockerfile gfj-ui
-
-                            echo "📤 Pushing image to Docker Hub..."
+                            echo "📤 Pushing image..."
                             buildah push ${IMAGE_NAME}
                         '''
                     }
@@ -114,10 +178,13 @@ pipeline {
             }
         }
 
+        /* ===================== GITOPS UPDATE ===================== */
         stage('Update K8s Manifests & Push') {
             steps {
                 container('jnlp') {
-                    withCredentials([string(credentialsId: "${GIT_CREDENTIALS_ID}", variable: 'GIT_TOKEN')]) {
+                    withCredentials([
+                        string(credentialsId: "${GIT_CREDENTIALS_ID}", variable: 'GIT_TOKEN')
+                    ]) {
                         sh '''
                             set -eux
                             DEPLOYMENT_REPO_AUTH=$(echo ${DEPLOYMENT_REPO} | sed "s|https://|https://${GIT_TOKEN}@|")
@@ -126,19 +193,15 @@ pipeline {
                             git clone -b main ${DEPLOYMENT_REPO_AUTH} k8s-manifests
                             cd k8s-manifests
 
-                            echo "📝 Updating image reference in deployment.yaml..."
-                            if grep -q "image: " deployment.yaml; then
-                              sed -i 's|image: .*|image: '"${IMAGE_NAME}"'|' deployment.yaml
-                            else
-                              echo "⚠️ No image: line found in deployment.yaml — ensure correct manifest path"
-                            fi
+                            echo "📝 Updating image reference..."
+                            sed -i 's|image: .*|image: '"${IMAGE_NAME}"'|' deployment.yaml
 
-                            git config --global user.email "c.innovator@gmail.com"
-                            git config --global user.name "chankyswami"
+                            git config user.email "c.innovator@gmail.com"
+                            git config user.name  "chankyswami"
 
                             git add .
-                            git commit -m "chore: update frontend image to ${IMAGE_NAME}" || echo "ℹ️ No changes to commit"
-                            git push origin main || echo "⚠️ Push failed"
+                            git commit -m "chore: update frontend image to ${IMAGE_NAME}" || echo "ℹ️ No changes"
+                            git push origin main
                         '''
                     }
                 }
@@ -147,11 +210,11 @@ pipeline {
     }
 
     post {
-        failure {
-            echo "❌ Pipeline failed"
-        }
         success {
-            echo "✅ Frontend image built, scanned with SonarQube, and deployment repo updated"
+            echo "✅ Build, Scan, and GitOps update completed successfully"
+        }
+        failure {
+            echo "❌ Pipeline failed — check security or quality gates"
         }
     }
 }
