@@ -7,7 +7,8 @@ spec:
   containers:
   - name: jnlp
     # image: chankyswami/jnlp-docker-mvn-trivy
-    image: chankyswami/jnlp-java21-node20-mvn-trivy-new
+    # image: chankyswami/jnlp-java21-node20-mvn-trivy-new
+    image: chankyswami/jnlp-docker-mvn-trivy-node20-new
     resources:
       requests:
         memory: "512Mi"
