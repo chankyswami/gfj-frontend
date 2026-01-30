@@ -156,7 +156,7 @@ pipeline {
         /* ===================== TRIVY IMAGE SCAN ===================== */
         stage('Trivy Image Scan') {
             steps {
-                container('buildah') {
+                container('jnlp') {
                     sh '''
                         set -eux
                         trivy image \
