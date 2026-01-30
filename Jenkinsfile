@@ -61,7 +61,7 @@ pipeline {
             }
         }
 
-        /* ===================== OWASP DEPENDENCY CHECK ===================== */
+        /* ===================== OWASP DEPENDENCY CHECK (FIXED) ===================== */
         stage('OWASP Dependency Check') {
             steps {
                 container('jnlp') {
@@ -72,16 +72,21 @@ pipeline {
                             sh '''
                                 set -eux
 
-                                mkdir -p dependency-check-report
-                                mkdir -p /home/jenkins/.dependency-check
+                                REPORT_DIR="dependency-check-report"
+                                DATA_DIR="/home/jenkins/.dependency-check"
+
+                                mkdir -p ${REPORT_DIR}
+                                mkdir -p ${DATA_DIR}
 
                                 echo "🔐 Running OWASP Dependency Check (CI-safe mode)"
 
                                 dependency-check.sh \
                                   --scan . \
-                                  --format XML,HTML \
-                                  --out dependency-check-report \
-                                  --data /home/jenkins/.dependency-check \
+                                  --project "${REPO_NAME}" \
+                                  --out ${REPORT_DIR} \
+                                  --data ${DATA_DIR} \
+                                  -f XML \
+                                  -f HTML \
                                   --disableAssembly \
                                   --nvdApiKey ${NVD_API_KEY} \
                                   --nvdApiDelay 8000 \
@@ -96,7 +101,10 @@ pipeline {
             post {
                 always {
                     dependencyCheckPublisher pattern: '**/dependency-check-report/dependency-check-report.xml'
-                    archiveArtifacts artifacts: '**/dependency-check-report/*.html', fingerprint: true
+
+                    archiveArtifacts artifacts: '**/dependency-check-report/*',
+                                     fingerprint: true,
+                                     allowEmptyArchive: true
                 }
             }
         }
