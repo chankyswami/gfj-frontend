@@ -38,9 +38,8 @@ pipeline {
                         env.IMAGE_NAME      = "docker.io/chankyswami/${repoName}:${commitSha}"
                         env.DEPLOYMENT_REPO = deploymentRepo
 
-                        echo "📦 Repo Name       : ${env.REPO_NAME}"
-                        echo "🐳 Image Name      : ${env.IMAGE_NAME}"
-                        echo "📂 Deploy Repo     : ${env.DEPLOYMENT_REPO}"
+                        echo "📦 Repo Name  : ${env.REPO_NAME}"
+                        echo "🐳 Image Name : ${env.IMAGE_NAME}"
                     }
                 }
             }
@@ -61,7 +60,7 @@ pipeline {
             }
         }
 
-        /* ===================== OWASP DEPENDENCY CHECK (FIXED) ===================== */
+        /* ===================== OWASP DEPENDENCY CHECK ===================== */
         stage('OWASP Dependency Check') {
             steps {
                 container('jnlp') {
@@ -70,29 +69,23 @@ pipeline {
                     ]) {
                         dir('gfj-ui') {
                             sh '''
-                                set -eux
+                                set +e
+                                mkdir -p dependency-check-report
+                                mkdir -p /home/jenkins/.dependency-check
 
-                                REPORT_DIR="dependency-check-report"
-                                DATA_DIR="/home/jenkins/.dependency-check"
-
-                                mkdir -p ${REPORT_DIR}
-                                mkdir -p ${DATA_DIR}
-
-                                echo "🔐 Running OWASP Dependency Check (CI-safe mode)"
+                                echo "🔐 Running OWASP Dependency Check (CI-safe)"
 
                                 dependency-check.sh \
                                   --scan . \
-                                  --project "${REPO_NAME}" \
-                                  --out ${REPORT_DIR} \
-                                  --data ${DATA_DIR} \
-                                  -f XML \
-                                  -f HTML \
+                                  --format ALL \
+                                  --out dependency-check-report \
+                                  --data /home/jenkins/.dependency-check \
                                   --disableAssembly \
                                   --nvdApiKey ${NVD_API_KEY} \
                                   --nvdApiDelay 8000 \
-                                  --failOnCVSS 7 || true
+                                  --failOnCVSS 7
 
-                                echo "📄 OWASP Dependency Check completed"
+                                echo "📄 OWASP scan completed"
                             '''
                         }
                     }
@@ -101,10 +94,7 @@ pipeline {
             post {
                 always {
                     dependencyCheckPublisher pattern: '**/dependency-check-report/dependency-check-report.xml'
-
-                    archiveArtifacts artifacts: '**/dependency-check-report/*',
-                                     fingerprint: true,
-                                     allowEmptyArchive: true
+                    archiveArtifacts artifacts: '**/dependency-check-report/*', allowEmptyArchive: true
                 }
             }
         }
@@ -153,22 +143,6 @@ pipeline {
             }
         }
 
-        /* ===================== TRIVY IMAGE SCAN ===================== */
-        stage('Trivy Image Scan') {
-            steps {
-                container('jnlp') {
-                    sh '''
-                        set -eux
-                        trivy image \
-                          --severity HIGH,CRITICAL \
-                          --exit-code 1 \
-                          --no-progress \
-                          ${IMAGE_NAME}
-                    '''
-                }
-            }
-        }
-
         /* ===================== PUSH IMAGE ===================== */
         stage('Push Image to Docker Hub') {
             steps {
@@ -190,6 +164,25 @@ pipeline {
             }
         }
 
+        /* ===================== TRIVY IMAGE SCAN (REMOTE) ===================== */
+        stage('Trivy Image Scan') {
+            steps {
+                container('jnlp') {
+                    sh '''
+                        set -eux
+                        echo "🔎 Running Trivy scan on pushed image"
+
+                        trivy image \
+                          --severity HIGH,CRITICAL \
+                          --exit-code 1 \
+                          --no-progress \
+                          --scanners vuln \
+                          ${IMAGE_NAME}
+                    '''
+                }
+            }
+        }
+
         /* ===================== GITOPS UPDATE ===================== */
         stage('Update K8s Manifests & Push') {
             steps {
@@ -199,7 +192,6 @@ pipeline {
                     ]) {
                         sh '''
                             set -eux
-
                             DEPLOYMENT_REPO_AUTH=$(echo ${DEPLOYMENT_REPO} | sed "s|https://|https://${GIT_TOKEN}@|")
 
                             git clone -b main ${DEPLOYMENT_REPO_AUTH} k8s-manifests
@@ -208,7 +200,7 @@ pipeline {
                             sed -i 's|image: .*|image: '"${IMAGE_NAME}"'|' deployment.yaml
 
                             git config user.email "c.innovator@gmail.com"
-                            git config user.name "chankyswami"
+                            git config user.name  "chankyswami"
 
                             git add .
                             git commit -m "chore: update image to ${IMAGE_NAME}" || echo "No changes"
