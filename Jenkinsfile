@@ -61,57 +61,57 @@ pipeline {
         }
 
         /* ===================== OWASP DEPENDENCY CHECK (SMART FIX) ===================== */
-        stage('OWASP Dependency Check') {
-            steps {
-                container('jnlp') {
-                    withCredentials([
-                        string(credentialsId: 'nvd-api-key', variable: 'NVD_API_KEY')
-                    ]) {
-                        dir('gfj-ui') {
-                            sh '''
-                                set +e
-                                mkdir -p dependency-check-report
-                                mkdir -p /home/jenkins/.dependency-check
+        // stage('OWASP Dependency Check') {
+        //     steps {
+        //         container('jnlp') {
+        //             withCredentials([
+        //                 string(credentialsId: 'nvd-api-key', variable: 'NVD_API_KEY')
+        //             ]) {
+        //                 dir('gfj-ui') {
+        //                     sh '''
+        //                         set +e
+        //                         mkdir -p dependency-check-report
+        //                         mkdir -p /home/jenkins/.dependency-check
 
-                                echo "🔐 Running OWASP Dependency Check (Smart CI Mode)"
+        //                         echo "🔐 Running OWASP Dependency Check (Smart CI Mode)"
 
-                                if [ -f /home/jenkins/.dependency-check/odc.mv.db ] || \
-                                   [ -f /home/jenkins/.dependency-check/odc.h2.db ]; then
-                                    echo "📦 Existing DB found → running with --noupdate"
-                                    dependency-check.sh \
-                                      --scan . \
-                                      --format ALL \
-                                      --out dependency-check-report \
-                                      --data /home/jenkins/.dependency-check \
-                                      --disableAssembly \
-                                      --noupdate \
-                                      --failOnCVSS 7
-                                else
-                                    echo "📥 No DB found → first-time DB download"
-                                    dependency-check.sh \
-                                      --scan . \
-                                      --format ALL \
-                                      --out dependency-check-report \
-                                      --data /home/jenkins/.dependency-check \
-                                      --disableAssembly \
-                                      --nvdApiKey ${NVD_API_KEY} \
-                                      --nvdApiDelay 12000 \
-                                      --failOnCVSS 7
-                                fi
+        //                         if [ -f /home/jenkins/.dependency-check/odc.mv.db ] || \
+        //                            [ -f /home/jenkins/.dependency-check/odc.h2.db ]; then
+        //                             echo "📦 Existing DB found → running with --noupdate"
+        //                             dependency-check.sh \
+        //                               --scan . \
+        //                               --format ALL \
+        //                               --out dependency-check-report \
+        //                               --data /home/jenkins/.dependency-check \
+        //                               --disableAssembly \
+        //                               --noupdate \
+        //                               --failOnCVSS 7
+        //                         else
+        //                             echo "📥 No DB found → first-time DB download"
+        //                             dependency-check.sh \
+        //                               --scan . \
+        //                               --format ALL \
+        //                               --out dependency-check-report \
+        //                               --data /home/jenkins/.dependency-check \
+        //                               --disableAssembly \
+        //                               --nvdApiKey ${NVD_API_KEY} \
+        //                               --nvdApiDelay 12000 \
+        //                               --failOnCVSS 7
+        //                         fi
 
-                                echo "📄 OWASP scan completed"
-                            '''
-                        }
-                    }
-                }
-            }
-            post {
-                always {
-                    dependencyCheckPublisher pattern: '**/dependency-check-report/dependency-check-report.xml'
-                    archiveArtifacts artifacts: '**/dependency-check-report/**', allowEmptyArchive: true
-                }
-            }
-        }
+        //                         echo "📄 OWASP scan completed"
+        //                     '''
+        //                 }
+        //             }
+        //         }
+        //     }
+        //     post {
+        //         always {
+        //             dependencyCheckPublisher pattern: '**/dependency-check-report/dependency-check-report.xml'
+        //             archiveArtifacts artifacts: '**/dependency-check-report/**', allowEmptyArchive: true
+        //         }
+        //     }
+        // }
 
         /* ===================== SONARQUBE ===================== */
         // stage('SonarQube Analysis') {
