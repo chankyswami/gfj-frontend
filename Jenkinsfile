@@ -60,7 +60,7 @@ pipeline {
             }
         }
 
-        /* ===================== OWASP DEPENDENCY CHECK ===================== */
+        /* ===================== OWASP DEPENDENCY CHECK (FIXED) ===================== */
         stage('OWASP Dependency Check') {
             steps {
                 container('jnlp') {
@@ -82,7 +82,8 @@ pipeline {
                                   --data /home/jenkins/.dependency-check \
                                   --disableAssembly \
                                   --nvdApiKey ${NVD_API_KEY} \
-                                  --nvdApiDelay 8000 \
+                                  --nvdApiDelay 10000 \
+                                  --noupdate \
                                   --failOnCVSS 7
 
                                 echo "📄 OWASP scan completed"
@@ -94,7 +95,7 @@ pipeline {
             post {
                 always {
                     dependencyCheckPublisher pattern: '**/dependency-check-report/dependency-check-report.xml'
-                    archiveArtifacts artifacts: '**/dependency-check-report/*', allowEmptyArchive: true
+                    archiveArtifacts artifacts: '**/dependency-check-report/**', allowEmptyArchive: true
                 }
             }
         }
@@ -164,10 +165,10 @@ pipeline {
             }
         }
 
-        /* ===================== TRIVY IMAGE SCAN (REMOTE) ===================== */
+        /* ===================== TRIVY IMAGE SCAN (FIXED) ===================== */
         stage('Trivy Image Scan') {
             steps {
-                container('jnlp') {
+                container('trivy') {
                     sh '''
                         set -eux
                         echo "🔎 Running Trivy scan on pushed image"
@@ -176,7 +177,6 @@ pipeline {
                           --severity HIGH,CRITICAL \
                           --exit-code 1 \
                           --no-progress \
-                          --scanners vuln \
                           ${IMAGE_NAME}
                     '''
                 }
