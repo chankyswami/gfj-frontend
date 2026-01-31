@@ -14,7 +14,6 @@ pipeline {
     }
 
     stages {
-
         /* ===================== CHECKOUT ===================== */
         stage('Checkout') {
             steps {
