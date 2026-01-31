@@ -22,7 +22,6 @@ pipeline {
                 }
             }
         }
-
         /* ===================== METADATA ===================== */
         stage('Get Repo Name') {
             steps {
