@@ -35,7 +35,7 @@ pipeline {
                         def commitSha      = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
 
                         env.REPO_NAME       = repoName
-                        env.IMAGE_NAME      = "docker.io/chankyswami/${repoName}:${commitSha}"
+                        env.IMAGE_NAME      = "docker.io/chankyswami/${repoName}:git-${commitSha}"
                         env.DEPLOYMENT_REPO = deploymentRepo
 
                         echo "📦 Repo Name  : ${env.REPO_NAME}"
