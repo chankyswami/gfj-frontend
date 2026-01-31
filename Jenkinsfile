@@ -181,7 +181,7 @@ pipeline {
         /* ===================== TRIVY IMAGE SCAN (REMOTE SAFE) ===================== */
         stage('Trivy Image Scan') {
             steps {
-                container('trivy') {
+                container('jnlp') {
                     sh '''
                         set -eux
                         echo "🔎 Running Trivy scan on pushed image"
