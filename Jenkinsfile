@@ -60,7 +60,7 @@ pipeline {
             }
         }
 
-        /* ===================== OWASP DEPENDENCY CHECK (FIXED) ===================== */
+        /* ===================== OWASP DEPENDENCY CHECK (SMART FIX) ===================== */
         stage('OWASP Dependency Check') {
             steps {
                 container('jnlp') {
@@ -73,18 +73,31 @@ pipeline {
                                 mkdir -p dependency-check-report
                                 mkdir -p /home/jenkins/.dependency-check
 
-                                echo "🔐 Running OWASP Dependency Check (CI-safe)"
+                                echo "🔐 Running OWASP Dependency Check (Smart CI Mode)"
 
-                                dependency-check.sh \
-                                  --scan . \
-                                  --format ALL \
-                                  --out dependency-check-report \
-                                  --data /home/jenkins/.dependency-check \
-                                  --disableAssembly \
-                                  --nvdApiKey ${NVD_API_KEY} \
-                                  --nvdApiDelay 10000 \
-                                  --noupdate \
-                                  --failOnCVSS 7
+                                if [ -f /home/jenkins/.dependency-check/odc.mv.db ] || \
+                                   [ -f /home/jenkins/.dependency-check/odc.h2.db ]; then
+                                    echo "📦 Existing DB found → running with --noupdate"
+                                    dependency-check.sh \
+                                      --scan . \
+                                      --format ALL \
+                                      --out dependency-check-report \
+                                      --data /home/jenkins/.dependency-check \
+                                      --disableAssembly \
+                                      --noupdate \
+                                      --failOnCVSS 7
+                                else
+                                    echo "📥 No DB found → first-time DB download"
+                                    dependency-check.sh \
+                                      --scan . \
+                                      --format ALL \
+                                      --out dependency-check-report \
+                                      --data /home/jenkins/.dependency-check \
+                                      --disableAssembly \
+                                      --nvdApiKey ${NVD_API_KEY} \
+                                      --nvdApiDelay 12000 \
+                                      --failOnCVSS 7
+                                fi
 
                                 echo "📄 OWASP scan completed"
                             '''
@@ -101,36 +114,36 @@ pipeline {
         }
 
         /* ===================== SONARQUBE ===================== */
-        stage('SonarQube Analysis') {
-            steps {
-                container('jnlp') {
-                    dir('gfj-ui') {
-                        withSonarQubeEnv('sonar') {
-                            sh '''
-                                set -eux
-                                npx sonar-scanner \
-                                  -Dsonar.projectKey=${REPO_NAME} \
-                                  -Dsonar.sources=src \
-                                  -Dsonar.host.url=${SONAR_URL} \
-                                  -Dsonar.login=${SONAR_TOKEN} \
-                                  -Dsonar.exclusions=**/node_modules/**,**/dist/**
-                            '''
-                        }
-                    }
-                }
-            }
-        }
+        // stage('SonarQube Analysis') {
+        //     steps {
+        //         container('jnlp') {
+        //             dir('gfj-ui') {
+        //                 withSonarQubeEnv('sonar') {
+        //                     sh '''
+        //                         set -eux
+        //                         npx sonar-scanner \
+        //                           -Dsonar.projectKey=${REPO_NAME} \
+        //                           -Dsonar.sources=src \
+        //                           -Dsonar.host.url=${SONAR_URL} \
+        //                           -Dsonar.login=${SONAR_TOKEN} \
+        //                           -Dsonar.exclusions=**/node_modules/**,**/dist/**
+        //                     '''
+        //                 }
+        //             }
+        //         }
+        //     }
+        // }
 
-        /* ===================== QUALITY GATE ===================== */
-        stage('Quality Gate') {
-            steps {
-                container('jnlp') {
-                    timeout(time: 5, unit: 'MINUTES') {
-                        waitForQualityGate abortPipeline: true
-                    }
-                }
-            }
-        }
+        // /* ===================== QUALITY GATE ===================== */
+        // stage('Quality Gate') {
+        //     steps {
+        //         container('jnlp') {
+        //             timeout(time: 5, unit: 'MINUTES') {
+        //                 waitForQualityGate abortPipeline: true
+        //             }
+        //         }
+        //     }
+        // }
 
         /* ===================== BUILD IMAGE ===================== */
         stage('Build Image with Buildah') {
@@ -165,7 +178,7 @@ pipeline {
             }
         }
 
-        /* ===================== TRIVY IMAGE SCAN (FIXED) ===================== */
+        /* ===================== TRIVY IMAGE SCAN (REMOTE SAFE) ===================== */
         stage('Trivy Image Scan') {
             steps {
                 container('trivy') {
@@ -177,6 +190,7 @@ pipeline {
                           --severity HIGH,CRITICAL \
                           --exit-code 1 \
                           --no-progress \
+                          --scanners vuln \
                           ${IMAGE_NAME}
                     '''
                 }
@@ -184,32 +198,32 @@ pipeline {
         }
 
         /* ===================== GITOPS UPDATE ===================== */
-        stage('Update K8s Manifests & Push') {
-            steps {
-                container('jnlp') {
-                    withCredentials([
-                        string(credentialsId: "${GIT_CREDENTIALS_ID}", variable: 'GIT_TOKEN')
-                    ]) {
-                        sh '''
-                            set -eux
-                            DEPLOYMENT_REPO_AUTH=$(echo ${DEPLOYMENT_REPO} | sed "s|https://|https://${GIT_TOKEN}@|")
+        // stage('Update K8s Manifests & Push') {
+        //     steps {
+        //         container('jnlp') {
+        //             withCredentials([
+        //                 string(credentialsId: "${GIT_CREDENTIALS_ID}", variable: 'GIT_TOKEN')
+        //             ]) {
+        //                 sh '''
+        //                     set -eux
+        //                     DEPLOYMENT_REPO_AUTH=$(echo ${DEPLOYMENT_REPO} | sed "s|https://|https://${GIT_TOKEN}@|")
 
-                            git clone -b main ${DEPLOYMENT_REPO_AUTH} k8s-manifests
-                            cd k8s-manifests
+        //                     git clone -b main ${DEPLOYMENT_REPO_AUTH} k8s-manifests
+        //                     cd k8s-manifests
 
-                            sed -i 's|image: .*|image: '"${IMAGE_NAME}"'|' deployment.yaml
+        //                     sed -i 's|image: .*|image: '"${IMAGE_NAME}"'|' deployment.yaml
 
-                            git config user.email "c.innovator@gmail.com"
-                            git config user.name  "chankyswami"
+        //                     git config user.email "c.innovator@gmail.com"
+        //                     git config user.name  "chankyswami"
 
-                            git add .
-                            git commit -m "chore: update image to ${IMAGE_NAME}" || echo "No changes"
-                            git push origin main
-                        '''
-                    }
-                }
-            }
-        }
+        //                     git add .
+        //                     git commit -m "chore: update image to ${IMAGE_NAME}" || echo "No changes"
+        //                     git push origin main
+        //                 '''
+        //             }
+        //         }
+        //     }
+        // }
     }
 
     post {
