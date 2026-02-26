@@ -1,6 +1,5 @@
-FROM nginx:alpine3.20
+FROM docker.io/nginx:alpine3.20
 
-# 🔐 Patch OS vulnerabilities
 RUN apk update && apk upgrade --no-cache
 
 WORKDIR /usr/share/nginx/html
