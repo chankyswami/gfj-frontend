@@ -1,5 +1,5 @@
 # Use official Nginx image as parent (with full registry path)
-FROM docker.io/library/nginx:alpine
+FROM docker.io/library/nginx:alpine3.20
 
 # Set the working directory in the container
 WORKDIR /usr/share/nginx/html
