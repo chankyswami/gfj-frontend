@@ -57,7 +57,6 @@ pipeline {
                 }
             }
         }
-
         /* ===================== OWASP DEPENDENCY CHECK (SMART FIX) ===================== */
         // stage('OWASP Dependency Check') {
         //     steps {
@@ -194,7 +193,7 @@ pipeline {
                 }
             }
         }
-        
+
         /* ===================== GITOPS UPDATE ===================== */
         // stage('Update K8s Manifests & Push') {
         //     steps {
