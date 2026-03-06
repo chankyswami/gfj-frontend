@@ -174,6 +174,8 @@ pipeline {
                 }
             }
         }
+
+        
         /* ===================== TRIVY IMAGE SCAN (REMOTE SAFE) ===================== */
         stage('Trivy Image Scan') {
             steps {
