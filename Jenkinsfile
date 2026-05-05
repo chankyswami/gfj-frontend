@@ -111,36 +111,36 @@ pipeline {
         // }
 
         /* ===================== SONARQUBE ===================== */
-        // stage('SonarQube Analysis') {
-        //     steps {
-        //         container('jnlp') {
-        //             dir('gfj-ui') {
-        //                 withSonarQubeEnv('sonar') {
-        //                     sh '''
-        //                         set -eux
-        //                         npx sonar-scanner \
-        //                           -Dsonar.projectKey=${REPO_NAME} \
-        //                           -Dsonar.sources=src \
-        //                           -Dsonar.host.url=${SONAR_URL} \
-        //                           -Dsonar.login=${SONAR_TOKEN} \
-        //                           -Dsonar.exclusions=**/node_modules/**,**/dist/**
-        //                     '''
-        //                 }
-        //             }
-        //         }
-        //     }
-        // }
+         stage('SonarQube Analysis') {
+             steps {
+                 container('jnlp') {
+                     dir('gfj-ui') {
+                         withSonarQubeEnv('sonar') {
+                             sh '''
+                                 set -eux
+                                 npx sonar-scanner \
+                                   -Dsonar.projectKey=${REPO_NAME} \
+                                   -Dsonar.sources=src \
+                                   -Dsonar.host.url=${SONAR_URL} \
+                                   -Dsonar.login=${SONAR_TOKEN} \
+                                   -Dsonar.exclusions=**/node_modules/**,**/dist/**
+                             '''
+                         }
+                     }
+                 }
+             }
+         }
 
-        // /* ===================== QUALITY GATE ===================== */
-        // stage('Quality Gate') {
-        //     steps {
-        //         container('jnlp') {
-        //             timeout(time: 5, unit: 'MINUTES') {
-        //                 waitForQualityGate abortPipeline: true
-        //             }
-        //         }
-        //     }
-        // }
+         /* ===================== QUALITY GATE ===================== */
+         stage('Quality Gate') {
+             steps {
+                 container('jnlp') {
+                     timeout(time: 5, unit: 'MINUTES') {
+                         waitForQualityGate abortPipeline: true
+                     }
+                 }
+             }
+         }
 
         /* ===================== BUILD IMAGE ===================== */
         stage('Build Image with Buildah') {
